@@ -1,6 +1,7 @@
 """FastAPI backend: auth-checked fraud scoring, history and stats on top of Supabase."""
 import json
 import os
+import re
 from pathlib import Path
 from typing import Literal
 
@@ -28,7 +29,15 @@ METRICS = json.loads((HERE / "metrics.json").read_text())
 app = FastAPI(title="AI Fraud Detection", docs_url=None, redoc_url=None)
 
 
+UPI_RE = re.compile(r"^[a-z0-9._\-]{2,}@[a-z][a-z0-9]{1,}$")
+
+
 class TxnIn(BaseModel):
+    txn_ref: str = Field(min_length=6, max_length=40, pattern=r"^[A-Za-z0-9_\-]+$")
+    sender_name: str = Field(min_length=1, max_length=80)
+    receiver_name: str = Field(min_length=1, max_length=80)
+    receiver_id: str = Field(min_length=3, max_length=60, pattern=r"^[A-Za-z0-9@._\-]+$")
+    note: str | None = Field(default=None, max_length=200)
     amount: float = Field(ge=0, le=1e9)
     txn_hour: int = Field(ge=0, le=23)
     txn_type: Literal[tuple(TXN_TYPES)]  # type: ignore[valid-type]
@@ -113,16 +122,69 @@ def model_info(user: dict = Depends(current_user)):
 
 @app.post("/api/predict")
 async def predict(t: TxnIn, user: dict = Depends(current_user)):
+    t.txn_ref = t.txn_ref.upper()
+    t.receiver_id = t.receiver_id.lower()
     risk, verdict = score(t)
     reasons = explain(t)
-    row = {**t.model_dump(), "risk_score": risk, "verdict": verdict, "reasons": reasons}
+
     async with httpx.AsyncClient(timeout=15) as c:
+        dup = await c.get(f"{SUPABASE_URL}/rest/v1/transactions",
+                          params={"select": "id", "txn_ref": f"eq.{t.txn_ref}", "limit": 1},
+                          headers=rest_headers(user))
+        if dup.status_code < 300 and dup.json():
+            raise HTTPException(409, f"Transaction ID {t.txn_ref} was already checked. Open it in Track to see the result.")
+        hist = await c.get(f"{SUPABASE_URL}/rest/v1/transactions",
+                           params={"select": "verdict", "receiver_id": f"eq.{t.receiver_id}", "limit": 200},
+                           headers=rest_headers(user))
+        past = hist.json() if hist.status_code < 300 else []
+
+        flagged = sum(1 for p in past if p["verdict"] == "suspicious")
+        if flagged:
+            reasons.insert(0, f"This receiver was flagged as likely fraud in {flagged} earlier check{'s' if flagged > 1 else ''}")
+            risk, verdict = max(risk, 90.0), "suspicious"
+        if t.txn_type == "upi" and not UPI_RE.match(t.receiver_id):
+            reasons.append("Receiver UPI ID does not look valid")
+            risk = max(risk, 45.0)
+            if verdict == "normal":
+                verdict = "review"
+        if not past and t.amount >= 25000:
+            reasons.append("First payment to this receiver and the amount is large")
+            if verdict == "normal":
+                risk, verdict = max(risk, 40.0), "review"
+
+        row = {**t.model_dump(), "risk_score": risk, "verdict": verdict, "reasons": reasons}
         r = await c.post(f"{SUPABASE_URL}/rest/v1/transactions", json=row,
                          headers=rest_headers(user, **{"Content-Type": "application/json",
                                                        "Prefer": "return=representation"}))
+    if r.status_code == 409:
+        raise HTTPException(409, f"Transaction ID {t.txn_ref} was already checked.")
     if r.status_code >= 300:
         raise HTTPException(502, f"Could not save result: {r.text[:200]}")
-    return r.json()[0]
+    out = r.json()[0]
+    out["receiver_checks"] = len(past)
+    return out
+
+
+@app.get("/api/lookup/{ref}")
+async def lookup(ref: str, user: dict = Depends(current_user)):
+    ref = ref.strip().upper()
+    if not re.fullmatch(r"[A-Z0-9_\-]{3,40}", ref):
+        raise HTTPException(422, "Transaction IDs use letters, numbers, dashes and underscores only.")
+    async with httpx.AsyncClient(timeout=15) as c:
+        r = await c.get(f"{SUPABASE_URL}/rest/v1/transactions",
+                        params={"select": "*", "txn_ref": f"eq.{ref}", "limit": 1},
+                        headers=rest_headers(user))
+        if r.status_code >= 300:
+            raise HTTPException(502, "Could not search right now. Try again.")
+        rows = r.json()
+        if not rows:
+            raise HTTPException(404, f"No transaction with ID {ref} has been checked yet. Check it first, then it will appear here.")
+        txn = rows[0]
+        rel = await c.get(f"{SUPABASE_URL}/rest/v1/transactions",
+                          params={"select": "txn_ref,amount,verdict,created_at", "receiver_id": f"eq.{txn['receiver_id']}",
+                                  "id": f"neq.{txn['id']}", "order": "created_at.desc", "limit": 5},
+                          headers=rest_headers(user))
+    return {"txn": txn, "related": rel.json() if rel.status_code < 300 else []}
 
 
 @app.get("/api/transactions")

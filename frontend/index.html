@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>FraudShield AI</title>
-<meta name="description" content="Check any online payment for fraud in seconds with machine learning.">
+<meta name="description" content="Check any online payment for fraud in seconds and track every payment by transaction ID.">
 <meta name="theme-color" content="#0B1020">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%237C8CFF'/%3E%3Cpath d='M16 6l8 3v6c0 5-3.4 8.6-8 10-4.6-1.4-8-5-8-10V9z' fill='%230B1020'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -17,33 +17,50 @@
 
 <!-- ============ AUTH ============ -->
 <main id="auth" class="auth" hidden>
-  <section class="auth-card" aria-labelledby="auth-title">
-    <div class="brand"><span class="logo" aria-hidden="true"></span><span>FraudShield AI</span></div>
-    <h1 id="auth-title">Know a payment is risky before you trust it</h1>
-    <p class="lede">Enter the details of any transaction. Our model scores it in under a second and tells you why.</p>
-
-    <div class="tabs" role="tablist">
-      <button role="tab" id="tab-login" aria-selected="true" data-mode="login">Sign in</button>
-      <button role="tab" id="tab-register" aria-selected="false" data-mode="register">Create account</button>
+  <section class="auth-hero" aria-hidden="true">
+    <div class="brand"><span class="logo"></span><span>FraudShield AI</span></div>
+    <div class="hero-copy">
+      <h2>Stop a bad payment before the money moves</h2>
+      <p>Enter a transaction ID and the payment details. You get a risk score and the exact reasons in under a second.</p>
     </div>
+    <div class="feed" id="feed">
+      <p class="feed-title">Sample activity</p>
+      <ul id="feed-list"></ul>
+    </div>
+  </section>
 
-    <form id="auth-form" novalidate>
-      <label class="field" id="name-field" hidden>
-        <span>Full name</span>
-        <input id="a-name" type="text" autocomplete="name" placeholder="Priya Sharma">
-      </label>
-      <label class="field">
-        <span>Email</span>
-        <input id="a-email" type="email" autocomplete="email" placeholder="you@example.com" required>
-      </label>
-      <label class="field">
-        <span>Password</span>
-        <input id="a-pass" type="password" autocomplete="current-password" placeholder="At least 6 characters" minlength="6" required>
-      </label>
-      <p id="auth-msg" class="form-msg" role="alert" aria-live="polite"></p>
-      <button class="btn primary wide" id="auth-submit" type="submit">Sign in</button>
-    </form>
-    <p class="fine">Your checks are private to your account.</p>
+  <section class="auth-pane">
+    <div class="auth-card" aria-labelledby="auth-title">
+      <div class="brand mobile-brand"><span class="logo" aria-hidden="true"></span><span>FraudShield AI</span></div>
+      <h1 id="auth-title">Welcome back</h1>
+      <p class="lede" id="auth-lede">Sign in to check and track your payments.</p>
+
+      <div class="tabs" role="tablist">
+        <button role="tab" id="tab-login" aria-selected="true" data-mode="login">Sign in</button>
+        <button role="tab" id="tab-register" aria-selected="false" data-mode="register">Create account</button>
+      </div>
+
+      <form id="auth-form" novalidate>
+        <label class="field" id="name-field" hidden>
+          <span>Full name</span>
+          <input id="a-name" type="text" autocomplete="name" placeholder="Priya Sharma">
+        </label>
+        <label class="field">
+          <span>Email</span>
+          <input id="a-email" type="email" autocomplete="email" placeholder="you@example.com" required>
+        </label>
+        <label class="field">
+          <span>Password</span>
+          <div class="pass">
+            <input id="a-pass" type="password" autocomplete="current-password" placeholder="At least 6 characters" minlength="6" required>
+            <button type="button" id="pass-toggle" class="icon-btn" aria-label="Show password" aria-pressed="false"></button>
+          </div>
+        </label>
+        <p id="auth-msg" class="form-msg" role="alert" aria-live="polite"></p>
+        <button class="btn primary wide" id="auth-submit" type="submit">Sign in</button>
+      </form>
+      <p class="fine">Your checks are private to your account.</p>
+    </div>
   </section>
 </main>
 
@@ -52,11 +69,11 @@
   <aside class="side">
     <div class="brand"><span class="logo" aria-hidden="true"></span><span>FraudShield AI</span></div>
     <nav id="nav" aria-label="Main">
-      <a href="#/dashboard" data-route="dashboard"><svg viewBox="0 0 24 24"><path d="M4 13h6V4H4zm0 7h6v-5H4zm10 0h6v-9h-6zm0-16v5h6V4z"/></svg><span>Dashboard</span></a>
-      <a href="#/check" data-route="check"><svg viewBox="0 0 24 24"><path d="M12 3l8 3v5c0 5-3.4 8.6-8 10-4.6-1.4-8-5-8-10V6zm-1 12l5-5-1.4-1.4L11 12.2 9.4 10.6 8 12z"/></svg><span>Check payment</span></a>
-      <a href="#/history" data-route="history"><svg viewBox="0 0 24 24"><path d="M13 3a9 9 0 100 18 9 9 0 000-18zm1 9.4l3 1.8-.8 1.3L12 13V7h2z"/></svg><span>History</span></a>
-      <a href="#/reports" data-route="reports"><svg viewBox="0 0 24 24"><path d="M5 3h10l4 4v14H5zm9 1.5V8h3.5zM8 12h8v1.5H8zm0 3h8v1.5H8z"/></svg><span>Reports</span></a>
-      <a href="#/model" data-route="model"><svg viewBox="0 0 24 24"><path d="M12 2l2.4 5.6L20 8l-4.4 3.8L17 18l-5-3-5 3 1.4-6.2L4 8l5.6-.4z"/></svg><span>Model</span></a>
+      <a href="#/dashboard" data-route="dashboard"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg><span>Dashboard</span></a>
+      <a href="#/check" data-route="check"><svg class="i" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.7 8.9a1 1 0 0 1-.6 0C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.2-2.7a1.2 1.2 0 0 1 1.6 0C14.5 3.8 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg><span>Check</span></a>
+      <a href="#/track" data-route="track"><svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><span>Track</span></a>
+      <a href="#/history" data-route="history"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span>History</span></a>
+      <a href="#/reports" data-route="reports"><svg class="i" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg><span>Reports</span></a>
     </nav>
     <div class="side-foot">
       <div class="who"><span class="avatar" id="avatar">U</span><div><strong id="who-name">User</strong><small id="who-mail"></small></div></div>
