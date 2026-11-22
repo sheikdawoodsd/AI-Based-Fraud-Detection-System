@@ -154,15 +154,17 @@
 
   /* ---------- router ---------- */
   const routes = { dashboard, check, track, history, reports };
+  let routeSeq = 0; // a page that finishes loading after the user moved on must not overwrite the page now shown
   function route() {
     if (!session) return;
+    const mine = ++routeSeq;
     const parts = location.hash.replace('#/', '').split('/');
     let name = parts[0] || 'dashboard'; const arg = parts[1] ? decodeURIComponent(parts[1]) : '';
     if (name === 'model') name = 'reports';
     if (!routes[name]) name = 'dashboard';
     $$('#nav a').forEach(a => a.classList.toggle('on', a.dataset.route === name));
     view.innerHTML = skeleton();
-    routes[name](arg).catch(e => { if (e.status === 401) return; view.innerHTML = `<div class="card empty-block"><p>${esc(e.message)}</p><button class="btn" onclick="location.reload()">Reload</button></div>`; });
+    routes[name](arg, mine).catch(e => { if (e.status === 401 || mine !== routeSeq) return; view.innerHTML = `<div class="card empty-block"><p>${esc(e.message)}</p><button class="btn" onclick="location.reload()">Reload</button></div>`; });
     scrollTo(0, 0); view.focus({ preventScroll: true });
   }
   async function txns(force) { if (!cache || force) cache = await api('/transactions?limit=1000'); return cache; }
@@ -233,19 +235,29 @@
     (function tick(n) { const k = Math.min((n - t0) / 1300, 1), e = 1 - Math.pow(1 - k, 3); pct.textContent = (risk * e).toFixed(0) + '%'; if (k < 1) requestAnimationFrame(tick); else pct.textContent = risk.toFixed(0) + '%'; })(t0);
   }
   const SUB = { normal: 'No strong warning signs found.', review: 'Some signs look unusual. Confirm with the receiver before paying.', suspicious: 'Do not complete this payment until you verify it.' };
-  const reasonList = (r, v) => `<ul class="reasons">${(r.length ? r : ['Amount, time and behaviour all match normal activity']).map((x, i) =>
-    `<li class="${r.length ? '' : 'none'}" style="animation-delay:${.4 + i * .08}s">${esc(x)}</li>`).join('')}</ul>`;
+  const IMPACT = /\s*\((high|medium|low) impact\)\s*$/;
+  const reasonList = (r, v) => `<p class="why-title">Why this score</p><ul class="reasons">${(r.length ? r : ['Amount, time and behaviour all match normal activity']).map((x, i) => {
+    const m = String(x).match(IMPACT), txt = String(x).replace(IMPACT, '');
+    return `<li class="${r.length ? '' : 'none'}" style="animation-delay:${.4 + i * .08}s"><span>${esc(txt)}</span>${m ? `<em class="imp ${m[1]}">${m[1]}</em>` : ''}</li>`;
+  }).join('')}</ul>`;
+  const ageText = d => { d = Number(d); if (d < 365) return 'Less than 1 year'; const y = Math.round(d / 365); return y + (y === 1 ? ' year' : ' years'); };
+  const ageOptions = sel => ['<option value="0">Less than 1 year</option>'].concat(Array.from({ length: 50 }, (_, i) => `<option value="${i + 1}"${i + 1 === sel ? ' selected' : ''}>${i + 1} ${i ? 'years' : 'year'}</option>`)).join('');
+  const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
   function trackSearch(val = '') {
     return `<form class="search" id="tsearch" role="search"><div class="search-box">${ico('search')}<input id="tq" type="search" value="${esc(val)}" placeholder="Enter transaction ID" aria-label="Transaction ID" autocomplete="off" spellcheck="false"></div><button class="btn primary" type="submit">Track</button></form>`;
   }
-  function bindSearch() {
+  function bindSearch(live) {
     const f = $('#tsearch'); if (!f) return;
-    f.onsubmit = e => { e.preventDefault(); const v = $('#tq').value.trim().replace(/\s+/g, ''); if (!v) return $('#tq').focus(); location.hash = '#/track/' + encodeURIComponent(v.toUpperCase()); };
+    const clean = () => $('#tq').value.trim().replace(/\s+/g, '').toUpperCase();
+    f.onsubmit = e => { e.preventDefault(); const v = clean(); if (!v) return $('#tq').focus(); location.hash = '#/track/' + encodeURIComponent(v); };
+    // live search: results appear while typing, without reloading the page or losing focus
+    if (live) $('#tq').addEventListener('input', debounce(() => { const v = clean(); if (v.length >= 3) { window.history.replaceState(null, '', '#/track/' + encodeURIComponent(v)); live(v); } else if (!v) { window.history.replaceState(null, '', '#/track'); live(''); } }, 350));
   }
 
   /* ---------- dashboard ---------- */
-  async function dashboard() {
-    const l = await txns(true), c = counts(l);
+  async function dashboard(_, mine) {
+    const l = await txns(true); if (mine !== routeSeq) return;
+    const c = counts(l);
     const name = (session.user.user_metadata && session.user.user_metadata.full_name || session.user.email.split('@')[0]).split(' ')[0];
     const today = startOfDay(Date.now()), td = l.filter(t => startOfDay(t.created_at) === today);
     const flaggedAmt = l.filter(t => t.verdict === 'suspicious').reduce((s, t) => s + Number(t.amount), 0);
@@ -270,8 +282,8 @@
 
   /* ---------- check ---------- */
   const mkRef = () => { const d = new Date(); return 'TXN' + d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0') + Math.random().toString(36).slice(2, 8).toUpperCase(); };
-  const SAFE = { ref: 'TXN-DEMO-1001', sender: 'Priya Sharma', rname: 'Fresh Mart Grocers', rid: 'freshmart@okhdfc', amount: 850, hour: 14, type: 'upi', merchant: 'grocery', intl: false, dev: false, ben: false, n24: 1, age: 900, avg: 1200 };
-  const RISKY = { ref: 'TXN-DEMO-2002', sender: 'Priya Sharma', rname: 'Quick Gains Ltd', rid: 'quickgains99@paytm', amount: 85000, hour: 2, type: 'upi', merchant: 'crypto', intl: true, dev: true, ben: true, n24: 8, age: 12, avg: 2500 };
+  const SAFE = { ref: 'TXN-DEMO-1001', sender: 'Priya Sharma', rname: 'Fresh Mart Grocers', rid: 'freshmart@okhdfc', amount: 850, hour: 14, type: 'upi', merchant: 'grocery', intl: false, dev: false, ben: false, n24: 1, age: 3, avg: 1200 };
+  const RISKY = { ref: 'TXN-DEMO-2002', sender: 'Priya Sharma', rname: 'Quick Gains Ltd', rid: 'quickgains99@paytm', amount: 85000, hour: 2, type: 'upi', merchant: 'crypto', intl: true, dev: true, ben: true, n24: 8, age: 0, avg: 2500 };
   async function check() {
     const pre = store.get('prefillRef'); store.del('prefillRef');
     const me = (session.user.user_metadata && session.user.user_metadata.full_name) || '';
@@ -280,7 +292,7 @@
       <form class="card" id="f" novalidate>
         <div class="presets"><button type="button" class="btn sm" data-p="safe">Fill a normal example</button><button type="button" class="btn sm" data-p="risky">Fill a suspicious example</button></div>
         <div class="sec"><h3>Payment details</h3><div class="form-grid">
-          <div class="field full" data-f="ref"><span>Transaction ID</span><div class="with-btn"><input id="ref" value="${esc(pre || '')}" placeholder="From your bank or UPI app" autocomplete="off" spellcheck="false" aria-describedby="e-ref"><button type="button" class="btn sm" id="gen" title="Make an ID if you do not have one">${ico('refresh')}Generate</button></div><small class="e" id="e-ref"></small></div>
+          <div class="field full" data-f="ref"><span>Transaction ID</span><div class="with-btn"><input id="ref" value="${esc(pre || '')}" placeholder="From your bank or UPI app" autocomplete="off" spellcheck="false" aria-describedby="e-ref"><button type="button" class="btn sm" id="gen" title="Make an ID if you do not have one">${ico('refresh')}Generate</button></div><small class="e" id="e-ref"></small><small class="hint ref-live" id="ref-live" aria-live="polite"></small></div>
           <label class="field" data-f="amount"><span>Amount (₹)</span><input id="amount" type="number" min="0" step="any" inputmode="decimal" placeholder="50000" aria-describedby="e-amount"><small class="e" id="e-amount"></small></label>
           <label class="field" data-f="time"><span>Time of payment</span><input id="time" type="time" aria-describedby="e-time"><small class="e" id="e-time"></small></label>
           <label class="field" data-f="sender"><span>Sender name</span><input id="sender" value="${esc(me)}" placeholder="Who is paying" autocomplete="off" aria-describedby="e-sender"><small class="e" id="e-sender"></small></label>
@@ -291,9 +303,9 @@
           <label class="field" data-f="note"><span>Note (optional)</span><input id="note" maxlength="200" placeholder="Payment remark" autocomplete="off"></label>
         </div></div>
         <div class="sec"><h3>About the sender</h3><div class="form-grid">
-          <label class="field"><span>Usual payment amount (₹)</span><input id="avg" type="number" min="0" step="any" inputmode="decimal" placeholder="Average of last 30 days"><small class="hint">Helps spot an unusually large payment.</small></label>
-          <label class="field"><span>Payments in the last 24 hours</span><input id="n24" type="number" min="0" max="500" value="1"></label>
-          <label class="field full"><span>Account age (days)</span><input id="age" type="number" min="0" value="365"></label>
+          <label class="field" data-f="avg"><span>Usual payment amount (₹)</span><input id="avg" type="number" min="0" step="any" inputmode="decimal" placeholder="Average of last 30 days" aria-describedby="e-avg"><small class="e" id="e-avg"></small><small class="hint">Helps spot an unusually large payment.</small></label>
+          <label class="field" data-f="n24"><span>Payments in the last 24 hours</span><input id="n24" type="number" min="0" max="500" value="1" aria-describedby="e-n24"><small class="e" id="e-n24"></small></label>
+          <label class="field full"><span>Sender account age</span><select id="age">${ageOptions(1)}</select></label>
         </div>
         <div class="switches">
           <label class="switch"><span>Payment is international</span><input id="intl" type="checkbox"></label>
@@ -314,6 +326,7 @@
       $('#amount').value = p.amount; $('#time').value = String(p.hour).padStart(2, '0') + ':30'; $('#type').value = p.type; $('#merchant').value = p.merchant;
       $('#avg').value = p.avg; $('#n24').value = p.n24; $('#age').value = p.age; $('#intl').checked = p.intl; $('#dev').checked = p.dev; $('#ben').checked = p.ben;
       $$('.field.err').forEach(f => f.classList.remove('err')); $$('.e').forEach(e => e.textContent = ''); typeLabel();
+      refLookup(); previewNow();
     };
     const typeLabel = () => { const u = $('#type').value === 'upi'; $('#rid-label').textContent = u ? 'Receiver UPI ID' : 'Receiver account or ID'; $('#rid').placeholder = u ? 'name@bank' : 'Account number or wallet ID'; };
     $('#type').onchange = typeLabel;
@@ -322,10 +335,50 @@
     $$('[data-p]').forEach(b => b.onclick = () => fill(b.dataset.p === 'safe' ? SAFE : RISKY));
     const setErr = (k, m) => { const f = $(`[data-f=${k}]`); f.classList.add('err'); $('#e-' + k).textContent = m; return k; };
     const clearErr = k => { const f = $(`[data-f=${k}]`); if (f) { f.classList.remove('err'); const e = $('#e-' + k); if (e) e.textContent = ''; } };
-    ['ref', 'amount', 'time', 'sender', 'rname', 'rid'].forEach(k => $('#' + k).addEventListener('input', () => clearErr(k)));
+    ['ref', 'amount', 'time', 'sender', 'rname', 'rid', 'avg', 'n24'].forEach(k => $('#' + k).addEventListener('input', () => clearErr(k)));
+
+    /* ---- real time: result updates while the form is being filled (nothing is saved) ---- */
+    let pvTimer, pvSeq = 0;
+    const coreBody = () => {
+      if (!$('#f')) return null; // the page was left while a timer was pending
+      const amount = parseFloat($('#amount').value), avg = parseFloat($('#avg').value), rid = $('#rid').value.trim();
+      if (!(amount > 0) || !(avg > 0) || !$('#time').value) return null;
+      return {
+        amount, txn_hour: parseInt($('#time').value.split(':')[0], 10), txn_type: $('#type').value, merchant_category: $('#merchant').value,
+        is_international: $('#intl').checked, new_device: $('#dev').checked, new_beneficiary: $('#ben').checked,
+        txns_last_24h: Math.max(0, parseInt($('#n24').value || '0', 10) || 0), account_age_years: parseInt($('#age').value, 10) || 0,
+        avg_amount_30d: avg, receiver_id: /^[A-Za-z0-9@._\-]{3,60}$/.test(rid) ? rid : null
+      };
+    };
+    const liveEmpty = () => { const b = $('#res'); if (b && b.dataset.live) { delete b.dataset.live; b.className = 'card result'; b.innerHTML = `<div class="empty">${ico('shield')}<p>Your result and the reasons behind it will show up here.</p></div>`; $$('.empty svg', b).forEach(s => { s.style.cssText = 'width:54px;height:54px;color:var(--line);margin-bottom:10px'; }); } };
+    const runPreview = async () => {
+      if (!$('#f')) return;
+      const body = coreBody(); const seq = ++pvSeq;
+      if (!body) return liveEmpty();
+      try { const r = await api('/preview', { method: 'POST', body: JSON.stringify(body) }); if (seq === pvSeq && $('#res')) showLive(r); }
+      catch (err) { if (err.status !== 401 && seq === pvSeq) liveEmpty(); }
+    };
+    const previewNow = () => { clearTimeout(pvTimer); pvTimer = setTimeout(runPreview, 400); };
+    $$('#f input, #f select').forEach(el => { if (el.id === 'ref') return; el.addEventListener('input', previewNow); el.addEventListener('change', previewNow); });
+
+    /* ---- real time: transaction ID is looked up as it is typed ---- */
+    let refSeq = 0;
+    const refLookup = async () => {
+      const box = $('#ref-live'), refEl = $('#ref'), seq = ++refSeq;
+      if (!box || !refEl) return; // the page was left while a timer was pending
+      const v = refEl.value.trim().replace(/\s+/g, '').toUpperCase(); box.className = 'hint ref-live'; box.textContent = '';
+      if (v.length < 6 || !/^[A-Za-z0-9_\-]+$/.test(v)) return;
+      try {
+        const r = await api('/lookup/' + encodeURIComponent(v)); if (seq !== refSeq) return;
+        box.className = 'hint ref-live found'; box.innerHTML = `Already checked: <b>${LABEL[r.txn.verdict]}</b>, risk ${Number(r.txn.risk_score).toFixed(0)}%. <a href="#/track/${encodeURIComponent(v)}">See full details</a>`;
+      } catch (err) { if (seq === refSeq && err.status === 404) { box.className = 'hint ref-live fresh'; box.textContent = 'New transaction ID. Fill in the details to check it.'; } }
+    };
+    $('#ref').addEventListener('input', debounce(refLookup, 350));
+    if (pre) refLookup();
 
     $('#f').onsubmit = async e => {
       e.preventDefault();
+      clearTimeout(pvTimer); pvSeq++;
       const msg = $('#f-msg'); msg.textContent = '';
       const v = { ref: $('#ref').value.trim().replace(/\s+/g, ''), sender: $('#sender').value.trim(), rname: $('#rname').value.trim(), rid: $('#rid').value.trim(), amount: $('#amount').value };
       $$('.field.err').forEach(f => f.classList.remove('err')); $$('.e').forEach(x => x.textContent = '');
@@ -333,6 +386,8 @@
       if (v.ref.length < 6 || !/^[A-Za-z0-9_\-]+$/.test(v.ref)) bad.push(setErr('ref', 'Use 6 to 40 letters, numbers or dashes. Use Generate if you have no ID.'));
       if (v.amount === '' || !(parseFloat(v.amount) > 0)) bad.push(setErr('amount', 'Enter an amount greater than zero.'));
       if (!$('#time').value) bad.push(setErr('time', 'Enter the time of the payment.'));
+      if (!(parseFloat($('#avg').value) > 0)) bad.push(setErr('avg', 'Enter the sender\'s usual payment amount. It is used to spot unusual amounts.'));
+      if ($('#n24').value === '' || !(parseInt($('#n24').value, 10) >= 0)) bad.push(setErr('n24', 'Enter how many payments were made in the last 24 hours (0 or more).'));
       if (!v.sender) bad.push(setErr('sender', 'Enter the sender name.'));
       if (!v.rname) bad.push(setErr('rname', 'Enter the receiver name.'));
       if (v.rid.length < 3 || !/^[A-Za-z0-9@._\-]+$/.test(v.rid)) bad.push(setErr('rid', 'Enter the receiver ID using letters, numbers and . _ - @ only.'));
@@ -342,7 +397,7 @@
         amount: parseFloat(v.amount), txn_hour: parseInt($('#time').value.split(':')[0], 10),
         txn_type: $('#type').value, merchant_category: $('#merchant').value,
         is_international: $('#intl').checked, new_device: $('#dev').checked, new_beneficiary: $('#ben').checked,
-        txns_last_24h: parseInt($('#n24').value || '0', 10), account_age_days: parseInt($('#age').value || '0', 10),
+        txns_last_24h: parseInt($('#n24').value || '0', 10), account_age_years: parseInt($('#age').value || '0', 10),
         avg_amount_30d: parseFloat($('#avg').value || '0')
       };
       const btn = $('#f-go'); btn.disabled = true; btn.innerHTML = '<span class="spin"></span>Checking';
@@ -354,8 +409,23 @@
       } finally { btn.disabled = false; btn.textContent = 'Check this payment'; }
     };
   }
+  function showLive(r) {
+    const box = $('#res'), risk = Number(r.risk_score);
+    box.className = 'card result live is-' + r.verdict;
+    if (!box.dataset.live || !$('.gauge', box)) {
+      box.dataset.live = '1';
+      box.innerHTML = `<span class="live-tag"><i></i>Live preview, not saved yet</span>${gaugeHTML(risk, r.verdict)}<h3 id="lv-t"></h3><p class="muted" id="lv-s"></p><div id="lv-r" style="width:100%"></div><p class="note">Press "Check this payment" to save this result under your transaction ID.</p>`;
+      animateGauge(box);
+    } else {
+      const g = $('.gauge', box), bar = $('.bar', g); g.dataset.risk = risk;
+      bar.style.stroke = HEX[r.verdict]; bar.style.strokeDashoffset = 597 * (1 - risk / 100); $('strong', g).textContent = risk.toFixed(0) + '%';
+    }
+    $('#lv-t').style.color = COLOR[r.verdict]; $('#lv-t').textContent = LABEL[r.verdict]; $('#lv-s').textContent = SUB[r.verdict];
+    $('#lv-r').innerHTML = reasonList(r.reasons || [], r.verdict);
+  }
   function showResult(r) {
     const box = $('#res'), risk = Number(r.risk_score);
+    delete box.dataset.live;
     box.className = 'card result is-' + r.verdict;
     box.innerHTML = `${gaugeHTML(risk, r.verdict)}<h3 style="color:${COLOR[r.verdict]}">${LABEL[r.verdict]}</h3><p class="muted">${SUB[r.verdict]}</p>
       <p class="note" style="margin:6px 0 0">${esc(r.txn_ref)} · ${inr(r.amount)} to ${esc(r.receiver_name)}</p>${reasonList(r.reasons, r.verdict)}
@@ -366,30 +436,36 @@
   }
 
   /* ---------- track ---------- */
+  let trackSeq = 0;
   async function track(ref) {
+    view.innerHTML = head('Track a transaction', 'Type a transaction ID. The payment, who paid whom, the risk score and the reasons appear as you type.', trackSearch(ref)) + '<div id="t-out"></div>';
+    bindOut(); bindSearch(trackShow);
+    await trackShow(ref);
+  }
+  async function trackShow(ref) {
+    const seq = ++trackSeq, out = $('#t-out'); if (!out) return;
     if (!ref) {
-      const l = await txns(true);
-      view.innerHTML = head('Track a transaction', 'Enter a transaction ID to see who paid whom, the risk score and the full history of that payment.', trackSearch()) +
-        (l.length ? `<div class="card"><h3>Recent payments</h3>${timeline(l.slice(0, 10))}</div>`
-          : `<div class="card empty-block"><h3>No payments to track yet</h3><p>Check a payment first. It will show up here by its transaction ID.</p>${goCheck}</div>`);
-      bindOut(); bindSearch(); return;
+      const l = await txns(true); if (seq !== trackSeq || !$('#t-out')) return;
+      out.innerHTML = l.length ? `<div class="card"><h3>Recent payments</h3>${timeline(l.slice(0, 10))}</div>`
+        : `<div class="card empty-block"><h3>No payments to track yet</h3><p>Check a payment first. It will show up here by its transaction ID.</p>${goCheck}</div>`;
+      return;
     }
-    view.innerHTML = head('Track a transaction', 'Full details for one payment.', trackSearch(ref)) + skeleton(); bindOut(); bindSearch();
+    out.innerHTML = skeleton();
     let res;
     try { res = await api('/lookup/' + encodeURIComponent(ref)); }
     catch (e) {
+      if (seq !== trackSeq || !$('#t-out')) return;
       if (e.status === 404 || e.status === 422) {
-        view.innerHTML = head('Track a transaction', 'Full details for one payment.', trackSearch(ref)) +
-          `<div class="card empty-block"><h3>No payment found for ${esc(ref)}</h3><p>${esc(e.message)}</p><button class="btn primary" id="chk-this">Check this payment</button></div>`;
-        bindOut(); bindSearch();
+        out.innerHTML = `<div class="card empty-block"><h3>No payment found for ${esc(ref)}</h3><p>${esc(e.message)}</p><button class="btn primary" id="chk-this">Check this payment</button></div>`;
         $('#chk-this').onclick = () => { store.set('prefillRef', ref); location.hash = '#/check'; };
         return;
       }
-      throw e;
+      out.innerHTML = `<div class="card empty-block"><p>${esc(e.message)}</p></div>`; return;
     }
+    if (seq !== trackSeq || !$('#t-out')) return;
     const t = res.txn, rel_ = res.related || [];
     const yn = b => b ? 'Yes' : 'No';
-    view.innerHTML = head('Track a transaction', 'Full details for one payment.', trackSearch(ref)) + `
+    out.innerHTML = `
     <div class="detail">
       <section class="card">
         <div class="d-head"><div><div class="refline"><span>${esc(t.txn_ref)}</span><button class="copy" id="copy" aria-label="Copy transaction ID">${ico('copy')}</button></div><small class="muted">Checked ${fmtDate(t.created_at)}</small></div><span class="pill ${t.verdict}">${LABEL[t.verdict]}</span></div>
@@ -408,7 +484,7 @@
           <div><dt>New device</dt><dd>${yn(t.new_device)}</dd></div>
           <div><dt>New beneficiary</dt><dd>${yn(t.new_beneficiary)}</dd></div>
           <div><dt>Payments in 24 hours</dt><dd>${t.txns_last_24h}</dd></div>
-          <div><dt>Account age</dt><dd>${t.account_age_days} days</dd></div>
+          <div><dt>Account age</dt><dd>${ageText(t.account_age_days)}</dd></div>
           <div><dt>Usual amount</dt><dd>${Number(t.avg_amount_30d) ? inr(t.avg_amount_30d) : 'Not given'}</dd></div>
           ${t.note ? `<div style="grid-column:1/-1"><dt>Note</dt><dd>${esc(t.note)}</dd></div>` : ''}
         </dl>
@@ -423,7 +499,7 @@
         : '<p class="muted">This is the only payment you have checked to this receiver.</p>'}</div>
       </aside>
     </div>`;
-    bindOut(); bindSearch(); animateGauge(view);
+    animateGauge(out);
     $('#copy').onclick = async () => { try { await navigator.clipboard.writeText(t.txn_ref); toast('Transaction ID copied'); } catch (e) { toast('Could not copy. Select the ID and copy it.', true); } };
   }
 
@@ -435,8 +511,9 @@
       <td class="num">${inr(t.amount)}</td><td class="num">${Number(t.risk_score).toFixed(1)}%</td><td><span class="pill ${t.verdict}">${LABEL[t.verdict]}</span></td>
       ${del ? `<td><button class="del" data-id="${t.id}" aria-label="Delete ${esc(t.txn_ref || 'this check')}">Delete</button></td>` : ''}</tr>`).join('')}</tbody></table></div>`;
   }
-  async function history() {
-    const all = await txns(true); let f = 'all', q = '';
+  async function history(_, mine) {
+    const all = await txns(true); if (mine !== routeSeq) return;
+    let f = 'all', q = '';
     const draw = () => {
       const l = all.filter(t => (f === 'all' || t.verdict === f) && (!q || [t.txn_ref, t.sender_name, t.receiver_name, t.receiver_id].join(' ').toLowerCase().includes(q)));
       $('#h-body').innerHTML = l.length ? table(l, true) : `<div class="empty-block"><p>${all.length ? 'No payments match your search.' : 'You have not checked any payments yet.'}</p>${all.length ? '' : goCheck}</div>`;
@@ -457,10 +534,10 @@
   }
 
   /* ---------- reports (with model performance) ---------- */
-  async function reports() {
-    const [l, m] = await Promise.all([txns(true), api('/model')]);
+  async function reports(_, mine) {
+    const [l, m] = await Promise.all([txns(true), api('/model')]); if (mine !== routeSeq) return;
     const c = counts(l), cf = m.confusion, pc = x => (x * 100).toFixed(1) + '%';
-    const tally = {}; l.forEach(t => (t.reasons || []).forEach(r => { const k = r.replace(/[\d.]+x/, 'N×').replace(/\d+ (transactions)/, 'N $1').replace(/\(\d+ days old\)/, '').replace(/\(\d\d:00.*\)/, '').replace(/\d+ earlier/, 'N earlier').trim(); tally[k] = (tally[k] || 0) + 1; }));
+    const tally = {}; l.forEach(t => (t.reasons || []).forEach(r => { const k = r.replace(/[\d.]+x/, 'N×').replace(/\d+ (transactions)/, 'N $1').replace(/\(\d+ days old\)/, '').replace(/\(\d\d:00.*\)/, '').replace(/\d+ earlier/, 'N earlier').replace(/\s*\((high|medium|low) impact\)\s*$/, '').replace(/₹[\d,]+/g, '₹N').replace(/^\d+ payments/, 'N payments').trim(); tally[k] = (tally[k] || 0) + 1; }));
     const top = Object.entries(tally).sort((a, b) => b[1] - a[1]).slice(0, 6), mx = top.length ? top[0][1] : 1;
     const money = k => l.filter(t => t.verdict === k).reduce((s, t) => s + Number(t.amount), 0);
     view.innerHTML = head('Reports', 'A summary of your checks and how well the model performs.', l.length ? '<button class="btn" id="csv">Download CSV</button> <button class="btn primary" id="print">Print report</button>' : '') + (l.length ? `

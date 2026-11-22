@@ -272,7 +272,7 @@ dl.facts dt{color:var(--muted);font-size:13px}
 dl.facts dd{margin:2px 0 0;font-weight:500}
 .mini-gauge{display:flex;align-items:center;gap:18px;margin-bottom:6px}
 .mini-gauge .gauge{width:110px;height:110px}
-.mini-gauge .gauge .num strong{font-size:28px}
+.mini-gauge .gauge .num strong{font-size:23px;letter-spacing:-.04em}
 .mini-gauge .gauge .num small{font-size:11px}
 .mini-gauge .gauge svg circle{stroke-width:16}
 .skeleton{background:linear-gradient(90deg,var(--surface) 25%,var(--surface-2) 50%,var(--surface) 75%);background-size:200% 100%;animation:shim 1.4s infinite;border-radius:var(--r-md);height:120px;margin-bottom:16px}
@@ -285,3 +285,20 @@ dl.facts dd{margin:2px 0 0;font-weight:500}
 .row-link small{color:var(--muted);display:block}
 @media(max-width:900px){.detail{grid-template-columns:1fr}.parties{grid-template-columns:1fr}.party.to{text-align:left}.flow{text-align:left}.flow svg{margin:4px 0 0;transform:rotate(90deg)}}
 @media(max-width:520px){.search{flex-direction:column}.stat-cell .val{font-size:26px}}
+
+/* ---- reasons: impact badges, live preview, live ID lookup ---- */
+.why-title{width:100%;text-align:left;margin:18px 0 0;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.why-title+.reasons{margin-top:8px}
+.reasons li{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.imp{font-style:normal;font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:3px 8px;border-radius:99px;flex:none;border:1px solid var(--line);color:var(--muted)}
+.imp.high{color:var(--bad);border-color:var(--bad)}
+.imp.medium{color:var(--warn);border-color:var(--warn)}
+.result.live .reasons li{animation:none}
+.live-tag{display:inline-flex;align-items:center;gap:8px;font-size:12px;font-weight:600;color:var(--muted);margin-bottom:10px}
+.live-tag i{width:8px;height:8px;border-radius:50%;background:var(--ok);animation:livepulse 1.6s ease-in-out infinite}
+@keyframes livepulse{0%,100%{box-shadow:0 0 0 0 rgba(63,217,168,.55)}50%{box-shadow:0 0 0 6px rgba(63,217,168,0)}}
+@media(prefers-reduced-motion:reduce){.live-tag i{animation:none}}
+.ref-live{min-height:0}
+.ref-live.found{color:var(--warn)}
+.ref-live.found a{color:var(--brand);font-weight:600}
+.ref-live.fresh{color:var(--ok)}
