@@ -79,10 +79,6 @@
   sb = supabase.createClient(cfg.supabase_url, cfg.supabase_key);
   const { data: s0 } = await sb.auth.getSession(); session = s0.session;
   sb.auth.onAuthStateChange((_e, s) => { const was = !!session; session = s; if (!!s !== was) render(); });
-  addEventListener('hashchange', route);
-  startFeed();
-  render();
-
   function render() {
     $('#auth').hidden = !!session; $('#app').hidden = !session;
     if (session) {
@@ -502,4 +498,9 @@
       a.download = 'fraud-report.csv'; a.click(); URL.revokeObjectURL(a.href);
     };
   }
+
+  /* ---------- start (must stay last: everything above has to be defined first) ---------- */
+  addEventListener('hashchange', route);
+  startFeed();
+  render();
 })();
