@@ -282,8 +282,8 @@
 
   /* ---------- check ---------- */
   const mkRef = () => { const d = new Date(); return 'TXN' + d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0') + Math.random().toString(36).slice(2, 8).toUpperCase(); };
-  const SAFE = { ref: 'TXN-DEMO-1001', sender: 'Priya Sharma', rname: 'Fresh Mart Grocers', rid: 'freshmart@okhdfc', amount: 850, hour: 14, type: 'upi', merchant: 'grocery', intl: false, dev: false, ben: false, n24: 1, age: 3, avg: 1200 };
-  const RISKY = { ref: 'TXN-DEMO-2002', sender: 'Priya Sharma', rname: 'Quick Gains Ltd', rid: 'quickgains99@paytm', amount: 85000, hour: 2, type: 'upi', merchant: 'crypto', intl: true, dev: true, ben: true, n24: 8, age: 0, avg: 2500 };
+  const SAFE = { ref: 'TXN-DEMO-1001', sender: 'Priya Sharma', rname: 'Fresh Mart Grocers', amount: 850, hour: 14, type: 'upi', merchant: 'grocery', intl: false, dev: false, ben: false, n24: 1, age: 3, avg: 1200 };
+  const RISKY = { ref: 'TXN-DEMO-2002', sender: 'Priya Sharma', rname: 'Quick Gains Ltd', amount: 85000, hour: 2, type: 'upi', merchant: 'crypto', intl: true, dev: true, ben: true, n24: 8, age: 0, avg: 2500 };
   async function check() {
     const pre = store.get('prefillRef'); store.del('prefillRef');
     const me = (session.user.user_metadata && session.user.user_metadata.full_name) || '';
@@ -298,9 +298,8 @@
           <label class="field" data-f="sender"><span>Sender name</span><input id="sender" value="${esc(me)}" placeholder="Who is paying" autocomplete="off" aria-describedby="e-sender"><small class="e" id="e-sender"></small></label>
           <label class="field" data-f="rname"><span>Receiver name</span><input id="rname" placeholder="Who is being paid" autocomplete="off" aria-describedby="e-rname"><small class="e" id="e-rname"></small></label>
           <label class="field" data-f="type"><span>Payment type</span><select id="type">${cfg.txn_types.map(t => `<option value="${t}">${TYPE_NAME[t]}</option>`).join('')}</select></label>
-          <label class="field" data-f="rid"><span id="rid-label">Receiver UPI ID</span><input id="rid" placeholder="name@bank" autocomplete="off" spellcheck="false" aria-describedby="e-rid"><small class="e" id="e-rid"></small></label>
           <label class="field" data-f="merchant"><span>Paid for</span><select id="merchant">${cfg.merchants.map(t => `<option value="${t}">${MERCH_NAME[t]}</option>`).join('')}</select></label>
-          <label class="field" data-f="note"><span>Note (optional)</span><input id="note" maxlength="200" placeholder="Payment remark" autocomplete="off"></label>
+          <label class="field full" data-f="note"><span>Note (optional)</span><input id="note" maxlength="200" placeholder="Payment remark" autocomplete="off"></label>
         </div></div>
         <div class="sec"><h3>About the sender</h3><div class="form-grid">
           <label class="field" data-f="avg"><span>Usual payment amount (₹)</span><input id="avg" type="number" min="0" step="any" inputmode="decimal" placeholder="Average of last 30 days" aria-describedby="e-avg"><small class="e" id="e-avg"></small><small class="hint">Helps spot an unusually large payment.</small></label>
@@ -322,32 +321,30 @@
     bindOut();
     $$('.empty svg').forEach(s => { s.style.cssText = 'width:54px;height:54px;color:var(--line);margin-bottom:10px'; });
     const fill = p => {
-      $('#ref').value = p.ref + '-' + Math.random().toString(36).slice(2, 6).toUpperCase(); $('#sender').value = p.sender; $('#rname').value = p.rname; $('#rid').value = p.rid;
+      $('#ref').value = p.ref + '-' + Math.random().toString(36).slice(2, 6).toUpperCase(); $('#sender').value = p.sender; $('#rname').value = p.rname;
       $('#amount').value = p.amount; $('#time').value = String(p.hour).padStart(2, '0') + ':30'; $('#type').value = p.type; $('#merchant').value = p.merchant;
       $('#avg').value = p.avg; $('#n24').value = p.n24; $('#age').value = p.age; $('#intl').checked = p.intl; $('#dev').checked = p.dev; $('#ben').checked = p.ben;
-      $$('.field.err').forEach(f => f.classList.remove('err')); $$('.e').forEach(e => e.textContent = ''); typeLabel();
+      $$('.field.err').forEach(f => f.classList.remove('err')); $$('.e').forEach(e => e.textContent = '');
       refLookup(); previewNow();
     };
-    const typeLabel = () => { const u = $('#type').value === 'upi'; $('#rid-label').textContent = u ? 'Receiver UPI ID' : 'Receiver account or ID'; $('#rid').placeholder = u ? 'name@bank' : 'Account number or wallet ID'; };
-    $('#type').onchange = typeLabel;
     $('#time').value = new Date().toTimeString().slice(0, 5);
     $('#gen').onclick = () => { $('#ref').value = mkRef(); clearErr('ref'); };
     $$('[data-p]').forEach(b => b.onclick = () => fill(b.dataset.p === 'safe' ? SAFE : RISKY));
     const setErr = (k, m) => { const f = $(`[data-f=${k}]`); f.classList.add('err'); $('#e-' + k).textContent = m; return k; };
     const clearErr = k => { const f = $(`[data-f=${k}]`); if (f) { f.classList.remove('err'); const e = $('#e-' + k); if (e) e.textContent = ''; } };
-    ['ref', 'amount', 'time', 'sender', 'rname', 'rid', 'avg', 'n24'].forEach(k => $('#' + k).addEventListener('input', () => clearErr(k)));
+    ['ref', 'amount', 'time', 'sender', 'rname', 'avg', 'n24'].forEach(k => $('#' + k).addEventListener('input', () => clearErr(k)));
 
     /* ---- real time: result updates while the form is being filled (nothing is saved) ---- */
     let pvTimer, pvSeq = 0;
     const coreBody = () => {
       if (!$('#f')) return null; // the page was left while a timer was pending
-      const amount = parseFloat($('#amount').value), avg = parseFloat($('#avg').value), rid = $('#rid').value.trim();
+      const amount = parseFloat($('#amount').value), avg = parseFloat($('#avg').value), rname = $('#rname').value.trim();
       if (!(amount > 0) || !(avg > 0) || !$('#time').value) return null;
       return {
         amount, txn_hour: parseInt($('#time').value.split(':')[0], 10), txn_type: $('#type').value, merchant_category: $('#merchant').value,
         is_international: $('#intl').checked, new_device: $('#dev').checked, new_beneficiary: $('#ben').checked,
         txns_last_24h: Math.max(0, parseInt($('#n24').value || '0', 10) || 0), account_age_years: parseInt($('#age').value, 10) || 0,
-        avg_amount_30d: avg, receiver_id: /^[A-Za-z0-9@._\-]{3,60}$/.test(rid) ? rid : null
+        avg_amount_30d: avg, receiver_name: rname.length >= 2 ? rname : null
       };
     };
     const liveEmpty = () => { const b = $('#res'); if (b && b.dataset.live) { delete b.dataset.live; b.className = 'card result'; b.innerHTML = `<div class="empty">${ico('shield')}<p>Your result and the reasons behind it will show up here.</p></div>`; $$('.empty svg', b).forEach(s => { s.style.cssText = 'width:54px;height:54px;color:var(--line);margin-bottom:10px'; }); } };
@@ -380,7 +377,7 @@
       e.preventDefault();
       clearTimeout(pvTimer); pvSeq++;
       const msg = $('#f-msg'); msg.textContent = '';
-      const v = { ref: $('#ref').value.trim().replace(/\s+/g, ''), sender: $('#sender').value.trim(), rname: $('#rname').value.trim(), rid: $('#rid').value.trim(), amount: $('#amount').value };
+      const v = { ref: $('#ref').value.trim().replace(/\s+/g, ''), sender: $('#sender').value.trim(), rname: $('#rname').value.trim(), amount: $('#amount').value };
       $$('.field.err').forEach(f => f.classList.remove('err')); $$('.e').forEach(x => x.textContent = '');
       const bad = [];
       if (v.ref.length < 6 || !/^[A-Za-z0-9_\-]+$/.test(v.ref)) bad.push(setErr('ref', 'Use 6 to 40 letters, numbers or dashes. Use Generate if you have no ID.'));
@@ -390,10 +387,9 @@
       if ($('#n24').value === '' || !(parseInt($('#n24').value, 10) >= 0)) bad.push(setErr('n24', 'Enter how many payments were made in the last 24 hours (0 or more).'));
       if (!v.sender) bad.push(setErr('sender', 'Enter the sender name.'));
       if (!v.rname) bad.push(setErr('rname', 'Enter the receiver name.'));
-      if (v.rid.length < 3 || !/^[A-Za-z0-9@._\-]+$/.test(v.rid)) bad.push(setErr('rid', 'Enter the receiver ID using letters, numbers and . _ - @ only.'));
       if (bad.length) { const el = $('#' + bad[0]); el.focus(); return; }
       const body = {
-        txn_ref: v.ref, sender_name: v.sender, receiver_name: v.rname, receiver_id: v.rid, note: $('#note').value.trim() || null,
+        txn_ref: v.ref, sender_name: v.sender, receiver_name: v.rname, note: $('#note').value.trim() || null,
         amount: parseFloat(v.amount), txn_hour: parseInt($('#time').value.split(':')[0], 10),
         txn_type: $('#type').value, merchant_category: $('#merchant').value,
         is_international: $('#intl').checked, new_device: $('#dev').checked, new_beneficiary: $('#ben').checked,
@@ -568,7 +564,7 @@
     requestAnimationFrame(() => requestAnimationFrame(() => $$('.fill').forEach(f => f.style.width = f.dataset.w + '%')));
     if ($('#print')) $('#print').onclick = () => print();
     if ($('#csv')) $('#csv').onclick = () => {
-      const cols = ['txn_ref', 'created_at', 'sender_name', 'receiver_name', 'receiver_id', 'amount', 'txn_hour', 'txn_type', 'merchant_category', 'is_international', 'new_device', 'new_beneficiary', 'txns_last_24h', 'account_age_days', 'avg_amount_30d', 'risk_score', 'verdict', 'reasons', 'note'];
+      const cols = ['txn_ref', 'created_at', 'sender_name', 'receiver_name', 'amount', 'txn_hour', 'txn_type', 'merchant_category', 'is_international', 'new_device', 'new_beneficiary', 'txns_last_24h', 'account_age_days', 'avg_amount_30d', 'risk_score', 'verdict', 'reasons', 'note'];
       const q = v => { let s = String(v == null ? '' : Array.isArray(v) ? v.join('; ') : v); if (/^[=+\-@]/.test(s)) s = "'" + s; return '"' + s.replace(/"/g, '""') + '"'; };
       const csv = [cols.join(','), ...l.map(t => cols.map(k => q(t[k])).join(','))].join('\n');
       const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));

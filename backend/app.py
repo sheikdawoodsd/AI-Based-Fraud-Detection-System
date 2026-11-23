@@ -27,6 +27,7 @@ SUPABASE_KEY = os.environ.get("SUPABASE_ANON_KEY", "sb_publishable_9FYtwds_ONlw3
 
 bundle = joblib.load(HERE / "model.joblib")
 MODEL, COLUMNS, THRESHOLD = bundle["model"], bundle["columns"], bundle["threshold"]
+REVIEW = bundle.get("review", 0.15)
 METRICS = json.loads((HERE / "metrics.json").read_text())
 
 app = FastAPI(title="AI Fraud Detection", docs_url=None, redoc_url=None)
@@ -43,7 +44,10 @@ async def client():
     yield _shared
 
 
-UPI_RE = re.compile(r"^[a-z0-9._\-]{2,}@[a-z][a-z0-9]{1,}$")
+def receiver_key(name: str | None) -> str | None:
+    """Same receiver written differently ("Fresh  Mart.", "fresh mart") gets the same key."""
+    key = re.sub(r"[\s.,'\u2019_\-]+", " ", (name or "").lower()).strip()
+    return key if len(key) >= 2 else None
 
 
 class Core(BaseModel):
@@ -73,14 +77,13 @@ class Core(BaseModel):
 
 
 class PreviewIn(Core):
-    receiver_id: str | None = Field(default=None, max_length=60, pattern=r"^[A-Za-z0-9@._\-]+$")
+    receiver_name: str | None = Field(default=None, max_length=80)
 
 
 class TxnIn(Core):
     txn_ref: str = Field(min_length=6, max_length=40, pattern=r"^[A-Za-z0-9_\-]+$")
     sender_name: str = Field(min_length=1, max_length=80)
     receiver_name: str = Field(min_length=1, max_length=80)
-    receiver_id: str = Field(min_length=3, max_length=60, pattern=r"^[A-Za-z0-9@._\-]+$")
     note: str | None = Field(default=None, max_length=200)
 
 
@@ -154,7 +157,7 @@ def model_reasons(t: Core, p0: float) -> list[str]:
 
 def score(t: Core) -> tuple[float, str, list[str]]:
     p = _probs([t.feature_row()])[0]
-    verdict = "suspicious" if p >= THRESHOLD else "review" if p >= 0.35 else "normal"
+    verdict = "suspicious" if p >= THRESHOLD else "review" if p >= REVIEW else "normal"
     return round(p * 100, 2), verdict, model_reasons(t, p)
 
 
@@ -191,24 +194,27 @@ def model_info(user: dict = Depends(current_user)):
     return {k: v for k, v in METRICS.items() if k != "features"}
 
 
-async def analyze(t: Core, receiver_id: str | None, user: dict, c: httpx.AsyncClient):
-    """Model score and reasons, plus checks on the receiver's history."""
+async def analyze(t: Core, receiver_name: str | None, user: dict, c: httpx.AsyncClient):
+    """Model score and reasons, plus checks on what is known about this receiver from earlier checks."""
     risk, verdict, reasons = await run_in_threadpool(score, t)
     past: list = []
-    if receiver_id:
+    key = receiver_key(receiver_name)
+    if key:
         hist = await c.get(f"{SUPABASE_URL}/rest/v1/transactions",
-                           params={"select": "verdict", "receiver_id": f"eq.{receiver_id}", "limit": 200},
+                           params={"select": "verdict", "receiver_key": f"eq.{key}", "limit": 200},
                            headers=rest_headers(user))
         past = hist.json() if hist.status_code < 300 else []
         flagged = sum(1 for p in past if p["verdict"] == "suspicious")
         if flagged:
-            reasons.insert(0, f"This receiver was flagged as likely fraud in {flagged} earlier check{'s' if flagged > 1 else ''} (high impact)")
-            risk, verdict = max(risk, 90.0), "suspicious"
-        if t.txn_type == "upi" and not UPI_RE.match(receiver_id):
-            reasons.append("Receiver UPI ID does not look valid (medium impact)")
-            risk = max(risk, 45.0)
-            if verdict == "normal":
-                verdict = "review"
+            # Matching is by name, and two people can share a name: one earlier flag asks for a review,
+            # repeated flags make the payment suspicious.
+            reasons.insert(0, f"A receiver with this name was flagged as likely fraud in {flagged} earlier check{'s' if flagged > 1 else ''}. Make sure it is not the same person (high impact)")
+            if flagged >= 2:
+                risk, verdict = max(risk, 90.0), "suspicious"
+            elif verdict == "normal":
+                risk, verdict = max(risk, 60.0), "review"
+            else:
+                risk = max(risk, 60.0)
         if not past and t.amount >= 25000:
             reasons.append("First payment to this receiver and the amount is large (medium impact)")
             if verdict == "normal":
@@ -219,16 +225,14 @@ async def analyze(t: Core, receiver_id: str | None, user: dict, c: httpx.AsyncCl
 @app.post("/api/preview")
 async def preview(t: PreviewIn, user: dict = Depends(current_user)):
     """Live result while the form is being filled in. Nothing is saved."""
-    rid = t.receiver_id.lower() if t.receiver_id and len(t.receiver_id) >= 3 else None
     async with client() as c:
-        risk, verdict, reasons, past = await analyze(t, rid, user, c)
+        risk, verdict, reasons, past = await analyze(t, t.receiver_name, user, c)
     return {"risk_score": risk, "verdict": verdict, "reasons": reasons, "receiver_checks": len(past)}
 
 
 @app.post("/api/predict")
 async def predict(t: TxnIn, user: dict = Depends(current_user)):
     t.txn_ref = t.txn_ref.upper()
-    t.receiver_id = t.receiver_id.lower()
 
     async with client() as c:
         dup = await c.get(f"{SUPABASE_URL}/rest/v1/transactions",
@@ -236,10 +240,10 @@ async def predict(t: TxnIn, user: dict = Depends(current_user)):
                           headers=rest_headers(user))
         if dup.status_code < 300 and dup.json():
             raise HTTPException(409, f"Transaction ID {t.txn_ref} was already checked. Open it in Track to see the result.")
-        risk, verdict, reasons, past = await analyze(t, t.receiver_id, user, c)
+        risk, verdict, reasons, past = await analyze(t, t.receiver_name, user, c)
 
         row = {**t.model_dump(exclude={"account_age_years"}), "account_age_days": t.age_days,
-               "risk_score": risk, "verdict": verdict, "reasons": reasons}
+               "receiver_key": receiver_key(t.receiver_name), "risk_score": risk, "verdict": verdict, "reasons": reasons}
         r = await c.post(f"{SUPABASE_URL}/rest/v1/transactions", json=row,
                          headers=rest_headers(user, **{"Content-Type": "application/json",
                                                        "Prefer": "return=representation"}))
@@ -268,7 +272,7 @@ async def lookup(ref: str, user: dict = Depends(current_user)):
             raise HTTPException(404, f"No transaction with ID {ref} has been checked yet. Check it first, then it will appear here.")
         txn = rows[0]
         rel = await c.get(f"{SUPABASE_URL}/rest/v1/transactions",
-                          params={"select": "txn_ref,amount,verdict,created_at", "receiver_id": f"eq.{txn['receiver_id']}",
+                          params={"select": "txn_ref,amount,verdict,created_at", "receiver_key": f"eq.{txn.get('receiver_key') or receiver_key(txn.get('receiver_name')) or '-'}",
                                   "id": f"neq.{txn['id']}", "order": "created_at.desc", "limit": 5},
                           headers=rest_headers(user))
     return {"txn": txn, "related": rel.json() if rel.status_code < 300 else []}
